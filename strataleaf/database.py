@@ -3,7 +3,7 @@ from .archive import Archives
 from .catalog import Catalog
 from .diagnostics import Diagnostics
 from .feeds import ChangeFeed
-from .indexes import Indexes
+from .indexes import Indexes, ensure_current_projection
 from .mvcc import read_record
 from .patch import patch_document
 from .query import QueryEngine
@@ -18,6 +18,7 @@ class Database:
     """An embedded, single-file, revisioned JSON document database."""
     def __init__(self, path, timeout=5.0):
         self._store = Storage(path, timeout)
+        ensure_current_projection(self._store)
         self.catalog = Catalog(self._store)
         self.indexes = Indexes(self._store)
         self.feed = ChangeFeed(self._store)

@@ -2,10 +2,15 @@ import hashlib
 import json
 import math
 import re
+from fractions import Fraction
 from .errors import InvalidDocument
 
 NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 MISSING = object()
+
+# Version of the index token format produced by scalar_token. Files without a
+# matching meta marker get their derived index projection rebuilt once on open.
+TOKEN_FORMAT = "2"
 
 
 def name(value):
@@ -68,9 +73,9 @@ def scalar_token(value):
     if isinstance(value, bool):
         return "b:" + str(int(value))
     if isinstance(value, (int, float)):
-        try:
-            number = float(value)
-        except OverflowError:
-            return "n:" + str(value)
-        return "n:" + (str(int(number)) if number.is_integer() else format(number, ".15g"))
+        # Exact rational canonical form: two numbers share a token iff they are
+        # numerically equal, so 1 == 1.0 and 0 == -0.0 while adjacent large
+        # integers and adjacent floats keep distinct tokens.
+        ratio = Fraction(value)
+        return "n:" + str(ratio.numerator) + "/" + str(ratio.denominator)
     return "v:" + dumps(value)

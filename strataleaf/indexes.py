@@ -1,5 +1,5 @@
-from .codec import MISSING, field, loads, name, scalar_token
-from .errors import Conflict, InvalidDocument, NotFound
+from .codec import MISSING, TOKEN_FORMAT, field, loads, name, scalar_token
+from .errors import Conflict, DatabaseError, InvalidDocument, NotFound
 from .mvcc import visible_rows
 
 
@@ -17,6 +17,33 @@ def refresh_document(connection, collection, key, document):
             if existing:
                 raise Conflict("unique index conflict: " + definition["name"])
         connection.execute("INSERT INTO index_values VALUES (?,?,?,?)", (collection, definition["name"], token, key))
+
+
+def ensure_current_projection(store):
+    """Rebuild the derived index projection when the stored token format is stale.
+
+    index_values is a projection of the documents visible at head, so it can be
+    recomputed in one transaction without touching document bodies, revisions,
+    commits, receipts, head or the database identity, and without creating a
+    document commit. The marker write shares the transaction, so an interrupted
+    rebuild rolls back completely and is redone on the next open; repeated
+    opens see the marker and change nothing. This internal maintenance also
+    runs on replicas, like replication apply; it is not a client write.
+    """
+    with store.atomic() as connection:
+        row = connection.execute("SELECT value FROM meta WHERE key='token_format'").fetchone()
+        if row is not None and row[0] == TOKEN_FORMAT:
+            return False
+        connection.execute("DELETE FROM index_values")
+        head = int(store.get("head"))
+        for collection in [item[0] for item in connection.execute("SELECT name FROM collections")]:
+            for visible in visible_rows(connection, collection, head):
+                try:
+                    refresh_document(connection, collection, visible["key"], loads(visible["body"]))
+                except Conflict as exc:
+                    raise DatabaseError("stored documents violate a unique index: " + str(exc)) from exc
+        connection.execute("INSERT OR REPLACE INTO meta VALUES ('token_format', ?)", (TOKEN_FORMAT,))
+        return True
 
 
 class Indexes:
